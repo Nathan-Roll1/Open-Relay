@@ -255,7 +255,7 @@ final class OnDeviceASRService {
     private func fourierModelDirectory(cache: HubCache) async throws -> URL {
         let repo = ASRModelVariant.fourier.repoId
         guard let id = Repo.ID(rawValue: repo) else { throw ASRError.modelLoadFailed(repo) }
-        let revision = "FOURIER_RELEASE_REVISION"
+        let revision = "f1efa79222a012f8c8ea5307e02298f4ca18c9b7"
         let root = StorageManager.modelCacheDirectory.appendingPathComponent("mlx-audio/oruk-fourier-2b")
             .appendingPathComponent(revision)
         let folder = "mlx/8bit"
