@@ -36,7 +36,15 @@ jobs:
           xcodebuild -downloadComponent MetalToolchain
           git clone -q --filter=blob:none https://github.com/Blaizzy/mlx-audio-swift /tmp/pinned-mlx
           cd /tmp/pinned-mlx && git checkout -q 01dec7c9bdce3088a6b6b7ab9f2e403458195efb
-          xcodebuild -scheme mlx-audio-swift-stt -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/relay-derived build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/relay-build.log 2>&1 || { tail -65 /tmp/relay-build.log; exit 1; }
+          python3 - <<'PYHARNESS'
+          from pathlib import Path
+          p=Path("Sources/Tools/mlx-audio-swift-stt/App.swift");s=p.read_text()
+          marker="return .stt(try await STT.loadModel(modelRepo: repo))"
+          assert marker in s
+          s=s.replace(marker,'if repo.hasPrefix("/") { return .stt(try await Qwen3ASRModel.fromModelDirectory(URL(fileURLWithPath: repo))) }\n        '+marker)
+          p.write_text(s)
+          PYHARNESS
+          xcodebuild -skipPackagePluginValidation -skipMacroValidation -scheme mlx-audio-swift-stt -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/relay-derived build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/relay-build.log 2>&1 || { tail -65 /tmp/relay-build.log; exit 1; }
       - name: Transcribe two English fixtures using the staged files
         run: |
           set -eo pipefail
@@ -52,5 +60,8 @@ jobs:
           norm=lambda s:re.findall(r"[a-z']+",s.lower())
           ref='And so my fellow Americans ask not what your country can do for you ask what you can do for your country'
           assert norm(Path('/tmp/jfk-out.txt').read_text())==norm(ref)
-          assert len(norm(Path('/tmp/libri-out.txt').read_text()))>=10
+          words=norm(Path('/tmp/libri-out.txt').read_text())
+          assert 'indirect modes of training children' in ' '.join(words)
+          assert 'yielding to their influence' in ' '.join(words)
+          print("Verified using Qwen3ASRModel.fromModelDirectory on the pinned Swift library")
           PY
