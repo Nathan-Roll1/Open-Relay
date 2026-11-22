@@ -26,7 +26,35 @@ jobs:
               end=s.index('\n    }',start)
               p.write_text(s[:start]+'\n        EmptyView()'+s[end:])
           PYFIX
+      - name: Stage a device-test entry point in the CI checkout
+        run: |
+          python3 - <<'PYDEVICE'
+          from pathlib import Path
+          p=Path('Open UI/App/Open_UIApp.swift')
+          original=p.read_text()
+          assert original.count('@main') == 1
+          p.write_text(original.replace('@main', '') + '\n' + Path('qa-device/FourierDevice.swift').read_text())
+          PYDEVICE
       - name: Build Fourier and its real app entry points with the pinned dependencies
         run: |
           set -o pipefail
           xcodebuild -project "Open UI.xcodeproj" -scheme "Open UI" -configuration Debug -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation -derivedDataPath /tmp/openrelay-build build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/build.log 2>&1 || { tail -85 /tmp/build.log; grep -inE 'error|sandbox|missing|requires|unexpected|warning:.*could not' /tmp/build.log | tail -35; exit 1; }
+
+      - name: Package device test without credentials or weights
+        run: |
+          mkdir -p /tmp/physical/Payload
+          app=$(find /tmp/openrelay-build/Build/Products/Debug-iphoneos -maxdepth 1 -type d -name '*.app' | head -1)
+          test -n "$app"
+          cp -R "$app" /tmp/physical/Payload/
+          packaged="/tmp/physical/Payload/$(basename "$app")"
+          # The QA probe uses only the foreground phone app. Device Farm re-signs the IPA.
+          rm -rf "$packaged/Watch" "$packaged/PlugIns"
+          curl -fsSL https://raw.githubusercontent.com/ggml-org/whisper.cpp/b0a11594aec50892a02cd8d129eee2dfe93a8bb8/samples/jfk.wav -o "$packaged/fourier-orig-jfk.wav"
+          codesign --force --deep --sign - "$packaged"
+          cd /tmp/physical
+          zip -q -r /tmp/openrelay-device.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openrelay-fourier-device
+          path: /tmp/openrelay-device.ipa
+          retention-days: 2
