@@ -15,4 +15,4 @@ jobs:
       - name: Build unsigned iOS app using the checked-in dependency versions
         run: |
           set -o pipefail
-          xcodebuild -project "Open UI.xcodeproj" -scheme "Open UI" -configuration Debug -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile -derivedDataPath /tmp/openrelay-build build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/build.log 2>&1 || { grep -E 'error:|could not|failed|fatal' /tmp/build.log | tail -45; exit 1; }
+          xcodebuild -project "Open UI.xcodeproj" -scheme "Open UI" -configuration Debug -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile -derivedDataPath /tmp/openrelay-build build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/build.log 2>&1 || { tail -85 /tmp/build.log; grep -inE 'error|sandbox|missing|requires|unexpected|warning:.*could not' /tmp/build.log | tail -35; exit 1; }
