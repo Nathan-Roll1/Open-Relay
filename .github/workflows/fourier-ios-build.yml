@@ -29,4 +29,4 @@ jobs:
       - name: Build Fourier and its real app entry points with the pinned dependencies
         run: |
           set -o pipefail
-          xcodebuild -project "Open UI.xcodeproj" -scheme "Open UI" -configuration Release -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation -derivedDataPath /tmp/openrelay-build build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/build.log 2>&1 || { tail -85 /tmp/build.log; grep -inE 'error|sandbox|missing|requires|unexpected|warning:.*could not' /tmp/build.log | tail -35; exit 1; }
+          xcodebuild -project "Open UI.xcodeproj" -scheme "Open UI" -configuration Debug -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation -derivedDataPath /tmp/openrelay-build build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/build.log 2>&1 || { tail -85 /tmp/build.log; grep -inE 'error|sandbox|missing|requires|unexpected|warning:.*could not' /tmp/build.log | tail -35; exit 1; }
