@@ -1,0 +1,29 @@
+private func fourierModelDirectory(cache: HubCache) async throws -> URL {
+        let repo = "oruk/oruk-fourier-2b"
+        guard let id = Repo.ID(rawValue: repo) else { throw AppError.unsupportedModelRepo(repo) }
+        let revision = "f1efa79222a012f8c8ea5307e02298f4ca18c9b7"
+        let root = URL(fileURLWithPath: "/tmp/relay-public-models").appendingPathComponent("mlx-audio/oruk-fourier-2b")
+            .appendingPathComponent(revision)
+        let folder = "mlx/8bit"
+        let local = root.appendingPathComponent(folder)
+        let required: [String: Int64] = [
+            "model.safetensors": 2463307581, "model.safetensors.index.json": 78928,
+            "config.json": 3164, "generation_config.json": 836102, "processor_config.json": 487,
+            "tokenizer.json": 11429377, "tokenizer_config.json": 1446, "chat_template.jinja": 1434,
+        ]
+        func complete() -> Bool {
+            required.allSatisfy { name, bytes in
+                let attributes = try? FileManager.default.attributesOfItem(atPath: local.appendingPathComponent(name).path)
+                return (attributes?[.size] as? NSNumber)?.int64Value == bytes
+            }
+        }
+        if complete() { return local }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        _ = try await HubClient(cache: cache).downloadSnapshot(
+            of: id, kind: .model, to: root, revision: revision,
+            matching: required.keys.map { "\(folder)/\($0)" },
+            progressHandler: { _ in }
+        )
+        guard complete() else { throw AppError.unsupportedModelRepo("Incomplete Fourier model download.") }
+        return local
+    }
