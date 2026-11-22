@@ -12,10 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: d8cfdde5404cb58c99d9b08d0adf4f96a56ada34
+          ref: 1b72fcb9400c79c96d7237347a50cf0c90be46e9
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest
+      - name: Type-check the watch orb against the watchOS SDK
+        run: |
+          swiftc -typecheck -target arm64_32-apple-watchos11.0 -sdk "$(xcrun --sdk watchos --show-sdk-path)" OpenRelayWatch/Views/OrbView.swift
       - name: Install Apple's Metal compiler
         run: xcodebuild -version && xcodebuild -downloadComponent MetalToolchain
       - name: Build all user-facing targets with the original application entry
