@@ -1,0 +1,18 @@
+name: Build Fourier settings and loader on iOS
+on:
+  push:
+    branches: [qa/fourier-app-build]
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.repository == 'Nathan-Roll1/Open-Relay'
+    runs-on: macos-26
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -downloadComponent MetalToolchain
+      - name: Build unsigned iOS app using the checked-in dependency versions
+        run: |
+          set -o pipefail
+          xcodebuild -project "Open UI.xcodeproj" -scheme "Open UI" -configuration Debug -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile -derivedDataPath /tmp/openrelay-build build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/build.log 2>&1 || { grep -E 'error:|could not|failed|fatal' /tmp/build.log | tail -45; exit 1; }
