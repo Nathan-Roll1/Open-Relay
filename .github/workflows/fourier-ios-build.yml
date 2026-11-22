@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 21f97e02b10596f581532c32ad0441d07b60e6e8
+          ref: d8cfdde5404cb58c99d9b08d0adf4f96a56ada34
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest
@@ -22,15 +22,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          swiftc -frontend -help-hidden | grep -e solver-expression-time-threshold -e solver-memory-threshold
           xcodebuild -project 'Open UI.xcodeproj' -scheme 'Open UI' -configuration Debug \
             -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile \
             -skipPackagePluginValidation -skipMacroValidation -derivedDataPath /tmp/openrelay-build \
             CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
-            'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -solver-expression-time-threshold=120 -Xfrontend -solver-memory-threshold=2147483648' \
             build >/tmp/openrelay-full.log 2>&1 || { grep -m30 -E 'error:|fatal error|BUILD FAILED' /tmp/openrelay-full.log || tail -30 /tmp/openrelay-full.log; exit 1; }
           grep -F '** BUILD SUCCEEDED **' /tmp/openrelay-full.log
           app=$(find /tmp/openrelay-build/Build/Products/Debug-iphoneos -maxdepth 1 -name '*.app' -print -quit)
           test -n "$app"
-          test -f "$app/Info.plist"
+          for component in             "Info.plist"             "PlugIns/OpenUIWidgetsExtension.appex/Info.plist"             "PlugIns/OpenUIShareExtension.appex/Info.plist"             "Watch/OpenRelayWatch.app/Info.plist"             "Watch/OpenRelayWatch.app/PlugIns/OpenRelayWatchWidgets.appex/Info.plist"; do
+            test -f "$app/$component"
+            echo "Built $component"
+          done
+          if find "$app" -type f \( -iname '*.gguf' -o -iname '*.safetensors' -o -iname '*.onnx' -o -iname '*.mlmodel' -o -iname '*.mlpackage' -o -iname '*.tflite' -o -iname 'weight.bin' \) | grep -q .; then
+            echo "Model weights present; skip packaging"
+          else
+            ditto -c -k --keepParent "$app" /tmp/open-relay-unsigned.zip
+          fi
           git diff --exit-code HEAD
+      - name: Save unsigned app and its extensions
+        uses: actions/upload-artifact@v4
+        with:
+          name: Open-Relay-unsigned-iOS-full
+          path: /tmp/open-relay-unsigned.zip
+          if-no-files-found: warn
+          retention-days: 7
