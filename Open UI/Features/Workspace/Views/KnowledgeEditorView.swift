@@ -152,35 +152,55 @@ struct KnowledgeEditorView: View {
     // MARK: Body
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Spacing.lg) {
-                    basicInfoSection
-                    settingsSection
-                    if isEditMode {
-                        filesSection
-                    }
-                }
-                .padding(.horizontal, Spacing.md)
-                .padding(.bottom, Spacing.xl)
+        NavigationStack { editorActions }
+        .onAppear {
+            populateFromExisting()
+            Task {
+                await manager?.fetchAllUsers()
+                await resolveGroupNames()
             }
-            .background(theme.background)
+            if let id = existing?.id {
+                Task { await fetchFiles(knowledgeId: id) }
+                Task { await pollPendingFiles(knowledgeId: id) }
+            }
+        }
+    }
+
+    private var editorForm: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.lg) {
+                basicInfoSection
+                settingsSection
+                if isEditMode {
+                    filesSection
+                }
+            }
+            .padding(.horizontal, Spacing.md)
+            .padding(.bottom, Spacing.xl)
+        }
+        .background(theme.background)
+    }
+
+    private func handlePickedFolder(_ url: URL) {
+        showFolderPicker = false
+        if folderMode == .sync {
+            // Count on a background task: large folders take a moment.
+            Task.detached {
+                let accessed = url.startAccessingSecurityScopedResource()
+                let n = KnowledgeManifest.count(root: url)
+                if accessed { url.stopAccessingSecurityScopedResource() }
+                await MainActor.run { pendingSyncCount = n; pendingSyncURL = url }
+            }
+        } else {
+            Task { await uploadFolderRun(from: url) }
+        }
+    }
+
+    private var editorWithImporters: some View {
+        editorForm
             .sheet(isPresented: $showFolderPicker) {
                 FolderPicker(
-                    onPick: { url in
-                        showFolderPicker = false
-                        if folderMode == .sync {
-                            // Count on a background task: large folders take a moment.
-                            Task.detached {
-                                let accessed = url.startAccessingSecurityScopedResource()
-                                let n = KnowledgeManifest.count(root: url)
-                                if accessed { url.stopAccessingSecurityScopedResource() }
-                                await MainActor.run { pendingSyncCount = n; pendingSyncURL = url }
-                            }
-                        } else {
-                            Task { await uploadFolderRun(from: url) }
-                        }
-                    },
+                    onPick: handlePickedFolder,
                     onCancel: { showFolderPicker = false }
                 )
                 .ignoresSafeArea()
@@ -202,6 +222,10 @@ struct KnowledgeEditorView: View {
             ) { result in
                 handleFileImport(result)
             }
+    }
+
+    private var editorWithDeleteDialogs: some View {
+        editorWithImporters
             // Centered delete confirmation for single file (using .alert for centered placement)
             .alert(
                 "Remove \"\(pendingRemoveFile?.name ?? "")\"?",
@@ -242,6 +266,10 @@ struct KnowledgeEditorView: View {
             } message: {
                 Text("Your unsaved changes will be lost.")
             }
+    }
+
+    private var editorWithErrors: some View {
+        editorWithDeleteDialogs
             .alert("Validation Error", isPresented: .init(
                 get: { validationError != nil },
                 set: { if !$0 { validationError = nil } }
@@ -260,18 +288,26 @@ struct KnowledgeEditorView: View {
             )) {
                 Button("OK", role: .cancel) {}
             } message: { Text(accessUpdateError ?? "") }
-            .modifier(KnowledgeFolderDialogs(
-                knowledgeId: existing?.id,
-                showNewFolder: $showNewFolderAlert, newFolderName: $newFolderName,
-                renamingDirectory: $renamingDirectory, renameDirectoryName: $renameDirectoryName,
-                deletingDirectory: $deletingDirectory,
-                renamingFile: $renamingFile, renameFileName: $renameFileName,
-                showMoveSheet: $showMoveSheet, movingFileIds: $movingFileIds, movingDirectory: $movingDirectory,
-                onCreateFolder: { n in Task { await createFolder(n) } },
-                onRenameFolder: { d, n in Task { await renameFolder(d, to: n) } },
-                onDeleteFolder: { d, keep in Task { await deleteFolder(d, moveFiles: keep) } },
-                onRenameFile: { f, n in Task { await renameKnowledgeFile(f, to: n) } },
-                onMove: { target in Task { await performMove(to: target) } }))
+    }
+
+    private var folderDialogs: KnowledgeFolderDialogs {
+        KnowledgeFolderDialogs(
+            knowledgeId: existing?.id,
+            showNewFolder: $showNewFolderAlert, newFolderName: $newFolderName,
+            renamingDirectory: $renamingDirectory, renameDirectoryName: $renameDirectoryName,
+            deletingDirectory: $deletingDirectory,
+            renamingFile: $renamingFile, renameFileName: $renameFileName,
+            showMoveSheet: $showMoveSheet, movingFileIds: $movingFileIds, movingDirectory: $movingDirectory,
+            onCreateFolder: { n in Task { await createFolder(n) } },
+            onRenameFolder: { d, n in Task { await renameFolder(d, to: n) } },
+            onDeleteFolder: { d, keep in Task { await deleteFolder(d, moveFiles: keep) } },
+            onRenameFile: { f, n in Task { await renameKnowledgeFile(f, to: n) } },
+            onMove: { target in Task { await performMove(to: target) } })
+    }
+
+    private var searchableEditor: some View {
+        editorWithErrors
+            .modifier(folderDialogs)
             .onChange(of: fileSearch) { _, _ in
                 searchTask?.cancel()
                 searchTask = Task {
@@ -280,6 +316,10 @@ struct KnowledgeEditorView: View {
                     await fetchFiles(knowledgeId: id)
                 }
             }
+    }
+
+    private var editorActions: some View {
+        searchableEditor
             .alert("Sync directory?", isPresented: .init(
                 get: { pendingSyncURL != nil }, set: { if !$0 { pendingSyncURL = nil } }
             )) {
@@ -296,18 +336,6 @@ struct KnowledgeEditorView: View {
             .onChange(of: fileSort) { _, _ in
                 if let id = existing?.id { Task { await fetchFiles(knowledgeId: id) } }
             }
-        }
-        .onAppear {
-            populateFromExisting()
-            Task {
-                await manager?.fetchAllUsers()
-                await resolveGroupNames()
-            }
-            if let id = existing?.id {
-                Task { await fetchFiles(knowledgeId: id) }
-                Task { await pollPendingFiles(knowledgeId: id) }
-            }
-        }
     }
 
     // MARK: - Sections
