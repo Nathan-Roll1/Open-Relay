@@ -27,7 +27,7 @@ jobs:
             -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile \
             -skipPackagePluginValidation -skipMacroValidation -derivedDataPath /tmp/openrelay-build \
             CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
-            'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -solver-expression-time-threshold=120 -Xfrontend -solver-memory-threshold -Xfrontend 2147483648' \
+            'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -solver-expression-time-threshold=120 -Xfrontend -solver-memory-threshold=2147483648' \
             build >/tmp/openrelay-full.log 2>&1 || { grep -m30 -E 'error:|fatal error|BUILD FAILED' /tmp/openrelay-full.log || tail -30 /tmp/openrelay-full.log; exit 1; }
           grep -F '** BUILD SUCCEEDED **' /tmp/openrelay-full.log
           app=$(find /tmp/openrelay-build/Build/Products/Debug-iphoneos -maxdepth 1 -name '*.app' -print -quit)
