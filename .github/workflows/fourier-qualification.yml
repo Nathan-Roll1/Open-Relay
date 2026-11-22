@@ -1,0 +1,56 @@
+name: Verify Fourier with Open Relay's pinned Swift runtime
+on:
+  push:
+    branches: [qa/fourier-pinned-swift]
+permissions:
+  contents: read
+jobs:
+  speech:
+    if: github.repository == 'Nathan-Roll1/Open-Relay'
+    runs-on: macos-26
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and verify the exact privately staged conversion
+        env:
+          TEST_INPUT: ${{ secrets.FOURIER_QUALIFICATION_INPUT }}
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,urllib.request,shutil
+          from pathlib import Path
+          out=Path('/tmp/fourier');out.mkdir()
+          for item in json.loads(os.environ.pop('TEST_INPUT')):
+              f=out/item['file'];assert f.parent==out
+              try:
+                  with urllib.request.urlopen(item['url'],timeout=120) as resp,f.open('wb') as dest:shutil.copyfileobj(resp,dest)
+              except Exception:
+                  raise RuntimeError('Unable to retrieve '+f.name) from None
+              h=hashlib.sha256()
+              with f.open('rb') as stream:
+                  for chunk in iter(lambda:stream.read(2**20),b''):h.update(chunk)
+              assert f.stat().st_size==item['size'] and h.hexdigest()==item['sha'],f.name
+              print(f.name,item['sha'])
+          PY
+      - name: Build exactly the MLX Audio version pinned by the app
+        run: |
+          xcodebuild -downloadComponent MetalToolchain
+          git clone -q --filter=blob:none https://github.com/Blaizzy/mlx-audio-swift /tmp/pinned-mlx
+          cd /tmp/pinned-mlx && git checkout -q 01dec7c9bdce3088a6b6b7ab9f2e403458195efb
+          xcodebuild -scheme mlx-audio-swift-stt -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/relay-derived build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/relay-build.log 2>&1 || { tail -65 /tmp/relay-build.log; exit 1; }
+      - name: Transcribe two English fixtures using the staged files
+        run: |
+          set -eo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ggml-org/whisper.cpp/b0a11594aec50892a02cd8d129eee2dfe93a8bb8/samples/jfk.wav -o /tmp/jfk.wav
+          curl -fsSL https://raw.githubusercontent.com/brittain9/speech-kit-obsidian-plugin/5d62e514bef084d65c9e0ea590636982b084aa43/native/tests/fixtures/audio/7021-79740-0000.wav -o /tmp/libri.wav
+          for sample in jfk libri; do
+            HF_HUB_OFFLINE=1 /tmp/relay-derived/Build/Products/Debug/mlx-audio-swift-stt --model /tmp/fourier --audio "/tmp/$sample.wav" --language English --format txt --output-path "/tmp/$sample-out"
+            cat "/tmp/$sample-out.txt"
+          done
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          norm=lambda s:re.findall(r"[a-z']+",s.lower())
+          ref='And so my fellow Americans ask not what your country can do for you ask what you can do for your country'
+          assert norm(Path('/tmp/jfk-out.txt').read_text())==norm(ref)
+          assert len(norm(Path('/tmp/libri-out.txt').read_text()))>=10
+          PY
