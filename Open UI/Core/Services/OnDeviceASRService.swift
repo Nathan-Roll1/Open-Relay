@@ -255,23 +255,27 @@ final class OnDeviceASRService {
     private func fourierModelDirectory(cache: HubCache) async throws -> URL {
         let repo = ASRModelVariant.fourier.repoId
         guard let id = Repo.ID(rawValue: repo) else { throw ASRError.modelLoadFailed(repo) }
+        let revision = "FOURIER_RELEASE_REVISION"
         let root = StorageManager.modelCacheDirectory.appendingPathComponent("mlx-audio/oruk-fourier-2b")
+            .appendingPathComponent(revision)
         let folder = "mlx/8bit"
         let local = root.appendingPathComponent(folder)
-        let revision = "FOURIER_RELEASE_REVISION"
-        let required = ["model.safetensors": 2463307581, "tokenizer.json": 11429377,
-                        "tokenizer_config.json": 1446, "config.json": 3164]
+        let required: [String: Int64] = [
+            "model.safetensors": 2463307581, "model.safetensors.index.json": 78928,
+            "config.json": 3164, "generation_config.json": 836102, "processor_config.json": 487,
+            "tokenizer.json": 11429377, "tokenizer_config.json": 1446, "chat_template.jinja": 1434,
+        ]
         func complete() -> Bool {
             required.allSatisfy { name, bytes in
                 let attributes = try? FileManager.default.attributesOfItem(atPath: local.appendingPathComponent(name).path)
-                return (attributes?[.size] as? NSNumber)?.int64Value == Int64(bytes)
+                return (attributes?[.size] as? NSNumber)?.int64Value == bytes
             }
         }
         if complete() { return local }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         _ = try await HubClient(cache: cache).downloadSnapshot(
             of: id, kind: .model, to: root, revision: revision,
-            matching: required.keys.map { "\(folder)/\($0)" } + ["\(folder)/chat_template.jinja"],
+            matching: required.keys.map { "\(folder)/\($0)" },
             progressHandler: { _ in }
         )
         guard complete() else { throw ASRError.modelLoadFailed("Incomplete Fourier model download.") }

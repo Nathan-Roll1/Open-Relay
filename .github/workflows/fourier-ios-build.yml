@@ -15,4 +15,6 @@ jobs:
       - name: Build unsigned iOS app using the checked-in dependency versions
         run: |
           set -o pipefail
+          # The upstream watchOS OrbView fails separately. Build the iOS target without embedding watchOS.
+          /usr/bin/sed -i '' -e '/38WATCH0E2F0000000000000E \/\* Embed Watch Content \*\/,$/d' -e '/38WATCH0B2F0000000000000B \/\* PBXTargetDependency \*\/,$/d' 'Open UI.xcodeproj/project.pbxproj'
           xcodebuild -project "Open UI.xcodeproj" -scheme "Open UI" -configuration Debug -destination 'generic/platform=iOS' -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation -derivedDataPath /tmp/openrelay-build build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO > /tmp/build.log 2>&1 || { tail -85 /tmp/build.log; grep -inE 'error|sandbox|missing|requires|unexpected|warning:.*could not' /tmp/build.log | tail -35; exit 1; }
