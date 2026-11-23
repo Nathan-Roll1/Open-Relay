@@ -1,0 +1,27 @@
+name: Verify original iOS simulator UI with stock loopback Open WebUI
+on:
+  push:
+    branches: [qa/fourier-full-simulator]
+permissions:
+  contents: read
+jobs:
+  simulator:
+    if: github.repository == 'Nathan-Roll1/Open-Relay'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+      - uses: astral-sh/setup-uv@v6
+      - name: Full app, loopback Open WebUI and external UI test
+        run: bash qa/full-simulator/run.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Original-iOS-simulator-UI-evidence
+          path: ${{ runner.temp }}/openrelay-evidence/
+          retention-days: 7

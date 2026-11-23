@@ -1,0 +1,31 @@
+name: FourierUI
+options:
+  deploymentTarget:
+    iOS: "18.0"
+targets:
+  Carrier:
+    type: application
+    platform: iOS
+    sources: [Carrier]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ai.oruk.qa.OpenRelayTestCarrier
+      GENERATE_INFOPLIST_FILE: YES
+  Journey:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: Carrier
+    settings:
+      TEST_TARGET_NAME: Carrier
+      PRODUCT_BUNDLE_IDENTIFIER: ai.oruk.qa.OpenRelayJourney
+      GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Journey:
+    build:
+      targets:
+        Carrier: all
+        Journey: [test]
+    test:
+      gatherCoverageData: false
+      targets: [Journey]
