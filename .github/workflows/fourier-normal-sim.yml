@@ -17,6 +17,14 @@ jobs:
         with:
           xcode-version: latest
       - uses: astral-sh/setup-uv@v6
+      - name: Identify the exact simulator toolchain
+        id: tc
+        run: echo "key=$( (xcodebuild -version; xcrun --sdk iphonesimulator --show-sdk-version; uname -m) | shasum -a 256 | cut -d' ' -f1 )" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: original
+        with:
+          path: /tmp/fourier-original-simulator-app.zip
+          key: Original-Simulator-1b72fcb9400c79c96d7237347a50cf0c90be46e9-${{ steps.tc.outputs.key }}
       - name: Full app, loopback Open WebUI and external UI test
         run: bash qa/full-simulator/run.sh
       - uses: actions/upload-artifact@v4
@@ -25,3 +33,17 @@ jobs:
           name: Original-iOS-simulator-UI-evidence
           path: ${{ runner.temp }}/openrelay-evidence/
           retention-days: 7
+      - name: Preserve compiled complete simulator app for future UI checks
+        if: always() && steps.original.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/fourier-original-simulator-app.zip
+          key: Original-Simulator-1b72fcb9400c79c96d7237347a50cf0c90be46e9-${{ steps.tc.outputs.key }}
+      - name: Upload the full simulator app built before sign-in
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Complete-original-Open-Relay-iOS-Simulator
+          path: /tmp/fourier-original-simulator-app.zip
+          retention-days: 7
+          if-no-files-found: warn

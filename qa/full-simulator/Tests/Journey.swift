@@ -64,13 +64,9 @@ final class Journey: XCTestCase {
         let host = "http://127.0.0.1:8319"
         url.typeText(host)
         XCTAssertEqual(url.value as? String, host, "The ordinary input must contain the expected loopback URL")
-        try tap("Advanced",prefix:true)
-        let keyfield=app.secureTextFields.firstMatch
-        XCTAssertTrue(keyfield.waitForExistence(timeout:12), "Missing optional API key field. "+labels())
-        keyfield.tap(); keyfield.typeText("LOCAL_OPEN_WEBUI_API_KEY")
-        // The credential field has no onSubmit action. Collapse Advanced to dismiss it
-        // and bring the full-width action below Advanced into the visible form.
-        if let adv=match("Advanced",in:app,prefix:true) { adv.tap() }
+        // The form's floating URL label is separate from its text input.
+        // Focus the title so the software keyboard does not obscure the form action.
+        if let title=match("Open Relay",in:app) { title.tap() }
         func connectionControl() -> XCUIElement? {
             if let labeled=match("Connect",in:app) { return labeled }
             // The app's custom AuthPrimaryButton can expose an empty AX label.
@@ -90,14 +86,28 @@ final class Journey: XCTestCase {
             let controls=app.buttons.allElementsBoundByIndex.filter{$0.exists}.map{"[\($0.label)] \($0.frame) on=\($0.isEnabled) hittable=\($0.isHittable)"}
             XCTFail("Connection action, exact label or geometry, unavailable: "+controls.joined(separator:"; ")); return
         }
-        checkpoint("Normal form submitted using locally verified test API key")
+        checkpoint("Tapping original Connect button")
         action.tap()
-        let moved = until(65, {
-            self.match("Menu",in:self.app) != nil || self.match("Server Settings",in:self.app) != nil ||
-            self.match("Skip",in:self.app) != nil || self.match("Get started",in:self.app) != nil
+        let authReady = until(65, {
+            self.match("Email & Password",in:self.app,prefix:true) != nil ||
+              self.match("Choose how you'd like to sign in",in:self.app) != nil ||
+              self.app.secureTextFields.firstMatch.exists
         })
-        XCTAssertTrue(moved, "After submitting the real connection form: "+labels())
-        checkpoint("Original app accepted localhost Open WebUI authentication")
+        XCTAssertTrue(authReady, "After real server connection: "+labels())
+        if !app.secureTextFields.firstMatch.exists { try tap("Email & Password",prefix:true,scroll:true) }
+        let email=app.textFields.firstMatch, pw=app.secureTextFields.firstMatch
+        XCTAssertTrue(email.waitForExistence(timeout:8) && pw.exists, "Missing normal login fields: "+labels())
+        email.tap(); email.typeText("fourier-qa@example.test"); pw.tap(); pw.typeText("LOCAL_OPEN_WEBUI_PASSWORD")
+        checkpoint("Entered a disposable user in the ordinary email/password screen")
+        // In the production code the secure field submits the same login method
+        // as the Sign in button when the user presses Return.
+        pw.typeText("\n")
+        func accepted() -> Bool { self.match("Menu",in:self.app) != nil || self.match("Server Settings",in:self.app) != nil || self.match("Skip",in:self.app) != nil || self.match("Not Now",in:self.app) != nil || self.match("Get started",in:self.app) != nil }
+        if !until(12,{ accepted() }) {
+          if let signin = match("Sign in",in:app) { signin.tap() }
+        }
+        XCTAssertTrue(until(35,{ accepted() }), "After ordinary password login: "+labels())
+        checkpoint("Original app accepted loopback Open WebUI human-session authentication")
         dismissInitialScreens()
         try openVoice()
         checkpoint("Authenticated original SwiftUI: Settings / Voice / Your Voice")

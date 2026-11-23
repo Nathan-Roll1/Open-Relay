@@ -8,21 +8,7 @@ bash qa/full-simulator/server.sh > "$RUNNER_TEMP/loopback-setup.log" 2>&1 &
 backendpid=$!
 cleanup(){ kill "$backendpid" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-brew list xcodegen >/dev/null 2>&1 || brew install xcodegen >/dev/null
-xcodebuild -version
-xcodebuild -downloadComponent MetalToolchain >/tmp/fourier-metal-install.log 2>&1
-dev=$(xcrun simctl list devices available -j | python3 -c 'import json,sys;d=json.load(sys.stdin)["devices"];dev=[v for k in reversed(sorted(d)) if "iOS-26" in k for v in d[k] if v["isAvailable"] and "iPhone" in v["name"]];print(dev[0]["udid"])')
-echo "$dev" > "$RUNNER_TEMP/openrelay-device"
-xcrun simctl boot "$dev" || true
-xcodebuild -project 'Open UI.xcodeproj' -scheme 'Open UI' -configuration Debug \
-  -destination "platform=iOS Simulator,id=$dev" -onlyUsePackageVersionsFromResolvedFile \
-  -skipPackagePluginValidation -skipMacroValidation -derivedDataPath /tmp/openrelay-build \
-  COMPILER_INDEX_STORE_ENABLE=NO build > /tmp/full-sim-build.log 2>&1 || { grep -m35 -E 'error:|fatal error|BUILD FAILED' /tmp/full-sim-build.log | tee "$e/build-failure.txt"; exit 1; }
-grep -F '** BUILD SUCCEEDED **' /tmp/full-sim-build.log | tee "$e/build.txt"
-xcrun simctl bootstatus "$dev" -b
-app=$(find /tmp/openrelay-build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' -print -quit)
-xcrun simctl install "$dev" "$app"
-for try in $(seq 1 100); do
+for try in $(seq 1 200); do
  if curl -fs --max-time 3 http://127.0.0.1:8319/health >/dev/null; then break; fi
  if ! kill -0 "$backendpid" 2>/dev/null; then grep -Ei '(error|failed|unsupported|no solution|traceback|not found)' "$RUNNER_TEMP/loopback-setup.log" | tail -25 | tee "$e/backend-failure.txt"; exit 1; fi
  sleep 4
@@ -34,14 +20,34 @@ import os,pathlib,json,urllib.request
 d={'email':'fourier-qa@example.test','password':pathlib.Path(os.environ['RUNNER_TEMP'],'fourier-qa-password').read_text().strip()}
 r=urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8319/api/v1/auths/signin',data=json.dumps(d).encode(),headers={'Content-Type':'application/json'}))
 token=json.load(r)['token']; assert token
-key=json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8319/api/v1/auths/api_key',method='POST',headers={'Authorization':'Bearer '+token})))['api_key']
-assert key.startswith('sk-')
-check=json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8319/api/v1/auths/',headers={'Authorization':'Bearer '+key})))
+check=json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8319/api/v1/auths/',headers={'Authorization':'Bearer '+token})))
 assert check['email']==d['email']
-print('::add-mask::'+key)
-p=pathlib.Path('qa/full-simulator/Tests/Journey.swift');p.write_text(p.read_text().replace('LOCAL_OPEN_WEBUI_API_KEY',key))
-print('Verified disposable real Open WebUI API key and authenticated account on loopback')
+p=pathlib.Path('qa/full-simulator/Tests/Journey.swift');p.write_text(p.read_text().replace('LOCAL_OPEN_WEBUI_PASSWORD',d['password']))
+print('Verified ordinary email/password session against /api/v1/auths/ on loopback before build')
 PY
+brew list xcodegen >/dev/null 2>&1 || brew install xcodegen >/dev/null
+xcodebuild -version
+xcodebuild -downloadComponent MetalToolchain >/tmp/fourier-metal-install.log 2>&1
+dev=$(xcrun simctl list devices available -j | python3 -c 'import json,sys;d=json.load(sys.stdin)["devices"];dev=[v for k in reversed(sorted(d)) if "iOS-26" in k for v in d[k] if v["isAvailable"] and "iPhone" in v["name"]];print(dev[0]["udid"])')
+echo "$dev" > "$RUNNER_TEMP/openrelay-device"
+xcrun simctl boot "$dev" || true
+pack=/tmp/fourier-original-simulator-app.zip
+if test -f "$pack"; then
+  dest="$RUNNER_TEMP/original-simulator-app"; mkdir -p "$dest"; ditto -x -k "$pack" "$dest"
+  app=$(find "$dest" -maxdepth 1 -name '*.app' -print -quit)
+  echo "Restored original simulator app from exact-source, exact-Xcode cache" | tee "$e/build.txt"
+else
+xcodebuild -project 'Open UI.xcodeproj' -scheme 'Open UI' -configuration Debug \
+  -destination "platform=iOS Simulator,id=$dev" -onlyUsePackageVersionsFromResolvedFile \
+  -skipPackagePluginValidation -skipMacroValidation -derivedDataPath /tmp/openrelay-build \
+  COMPILER_INDEX_STORE_ENABLE=NO build > /tmp/full-sim-build.log 2>&1 || { grep -m35 -E 'error:|fatal error|BUILD FAILED' /tmp/full-sim-build.log | tee "$e/build-failure.txt"; exit 1; }
+grep -F '** BUILD SUCCEEDED **' /tmp/full-sim-build.log | tee "$e/build.txt"
+app=$(find /tmp/openrelay-build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' -print -quit)
+  test -n "$app"
+  ditto -c -k --keepParent "$app" "$pack"
+fi
+xcrun simctl bootstatus "$dev" -b
+xcrun simctl install "$dev" "$app"
 (cd qa/full-simulator && xcodegen generate)
 set +e
 xcodebuild -project qa/full-simulator/FourierUI.xcodeproj -scheme Journey -destination "platform=iOS Simulator,id=$dev" -parallel-testing-enabled NO -derivedDataPath /tmp/fourier-ui -resultBundlePath /tmp/fourier-ui.xcresult test >/tmp/fourier-ui.log 2>&1
