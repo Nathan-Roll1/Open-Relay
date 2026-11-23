@@ -61,23 +61,53 @@ final class Journey: XCTestCase {
         continueAfterFailure = false; app.launch()
         let url = app.textFields.firstMatch
         XCTAssertTrue(url.waitForExistence(timeout:22), labels()); url.tap()
-        url.typeText("http://127.0.0.1:8319\n")
-        if !until(7, { self.match("Email & Password",in:self.app,prefix:true) != nil }) { try tap("Connect",scroll:true) }
-        XCTAssertTrue(until(18, { self.match("Email & Password",in:self.app,prefix:true) != nil }), labels())
-        checkpoint("Production server connection accepted stock Open WebUI on loopback")
-        try tap("Email & Password",prefix:true)
-        let email = app.textFields.firstMatch, pass=app.secureTextFields.firstMatch
-        XCTAssertTrue(email.waitForExistence(timeout:10)); email.tap(); email.typeText("fourier-qa@example.test")
-        XCTAssertTrue(pass.exists);pass.tap();pass.typeText("QA_PASS_PHRASE\n")
-        if !until(8, { self.match("Not Now",in:self.app) != nil || self.match("Skip",in:self.app) != nil || self.match("Menu",in:self.app) != nil }) {
-            if match("Sign in",in:app) != nil { try tap("Sign in") }
+        let host = "http://127.0.0.1:8319"
+        url.typeText(host)
+        XCTAssertEqual(url.value as? String, host, "The ordinary input must contain the expected loopback URL")
+        try tap("Advanced",prefix:true)
+        let keyfield=app.secureTextFields.firstMatch
+        XCTAssertTrue(keyfield.waitForExistence(timeout:12), "Missing optional API key field. "+labels())
+        keyfield.tap(); keyfield.typeText("LOCAL_OPEN_WEBUI_API_KEY")
+        // The credential field has no onSubmit action. Collapse Advanced to dismiss it
+        // and bring the full-width action below Advanced into the visible form.
+        if let adv=match("Advanced",in:app,prefix:true) { adv.tap() }
+        func connectionControl() -> XCUIElement? {
+            if let labeled=match("Connect",in:app) { return labeled }
+            // The app's custom AuthPrimaryButton can expose an empty AX label.
+            // Match only the enabled wide action directly below Advanced, above Need help.
+            guard let adv = match("Advanced",in:app,prefix:true) else { return nil }
+            let help=match("Need help?",in:app)?.frame.minY ?? app.frame.maxY
+            let candidate = app.buttons.allElementsBoundByIndex.filter {
+                $0.exists && $0.isEnabled && $0.isHittable && $0.label.isEmpty &&
+                $0.frame.width > app.frame.width*0.48 && $0.frame.midY >= adv.frame.midY &&
+                $0.frame.midY < help && $0.frame.height >= 38
+            }
+            return candidate.count==1 ? candidate[0] : nil
         }
+        var action = connectionControl()
+        for _ in 0..<3 where action == nil { app.swipeUp(); action = connectionControl() }
+        guard let action = action else {
+            let controls=app.buttons.allElementsBoundByIndex.filter{$0.exists}.map{"[\($0.label)] \($0.frame) on=\($0.isEnabled) hittable=\($0.isHittable)"}
+            XCTFail("Connection action, exact label or geometry, unavailable: "+controls.joined(separator:"; ")); return
+        }
+        checkpoint("Normal form submitted using locally verified test API key")
+        action.tap()
+        let moved = until(65, {
+            self.match("Menu",in:self.app) != nil || self.match("Server Settings",in:self.app) != nil ||
+            self.match("Skip",in:self.app) != nil || self.match("Get started",in:self.app) != nil
+        })
+        XCTAssertTrue(moved, "After submitting the real connection form: "+labels())
+        checkpoint("Original app accepted localhost Open WebUI authentication")
         dismissInitialScreens()
         try openVoice()
         checkpoint("Authenticated original SwiftUI: Settings / Voice / Your Voice")
         try tap("Recognition model",prefix:true,scroll:true)
         try tap("Oruk Fourier 2B",prefix:true)
-        XCTAssertTrue(until(8,{ self.match("English · 2.48 GB · Model license",in:self.app,prefix:true) != nil }), labels())
+        var visibleLicense=false
+        for _ in 0..<5 {
+            if match("English · 2.48 GB · Model license",in:app,prefix:true) != nil { visibleLicense=true; break }; app.swipeUp()
+        }
+        XCTAssertTrue(visibleLicense, labels())
         checkpoint("Selected Oruk Fourier 2B in the ordinary model picker; Fourier license row visible")
         let selected = XCTAttachment(screenshot: app.screenshot());selected.name="Fourier-selected";selected.lifetime = .keepAlways;add(selected)
         // Verify persistence before asking the simulator to initialize MLX.

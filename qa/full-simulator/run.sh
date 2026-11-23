@@ -4,11 +4,6 @@ e="$RUNNER_TEMP/openrelay-evidence";mkdir -p "$e"
 test "$(git diff --name-only 1b72fcb9400c79c96d7237347a50cf0c90be46e9 -- 'Open UI' 'Open UI.xcodeproj' 'App' 'OpenRelayWatch' 'OpenRelayWatchWidgets' 'OpenUIWidgets' 'OpenUIShareExtension' | wc -l | tr -d ' ')" = 0
 openssl rand -hex 12 > "$RUNNER_TEMP/fourier-qa-password"
 echo "::add-mask::$(cat "$RUNNER_TEMP/fourier-qa-password")"
-python3 - <<'PY'
-import os,pathlib
-p=pathlib.Path('qa/full-simulator/Tests/Journey.swift')
-p.write_text(p.read_text().replace('QA_PASS_PHRASE',pathlib.Path(os.environ['RUNNER_TEMP'],'fourier-qa-password').read_text().strip()))
-PY
 bash qa/full-simulator/server.sh > "$RUNNER_TEMP/loopback-setup.log" 2>&1 &
 backendpid=$!
 cleanup(){ kill "$backendpid" >/dev/null 2>&1 || true; }
@@ -38,8 +33,14 @@ python3 - <<'PY'
 import os,pathlib,json,urllib.request
 d={'email':'fourier-qa@example.test','password':pathlib.Path(os.environ['RUNNER_TEMP'],'fourier-qa-password').read_text().strip()}
 r=urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8319/api/v1/auths/signin',data=json.dumps(d).encode(),headers={'Content-Type':'application/json'}))
-assert json.load(r)['token']
-print('Verified login for the temporary local test identity')
+token=json.load(r)['token']; assert token
+key=json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8319/api/v1/auths/api_key',method='POST',headers={'Authorization':'Bearer '+token})))['api_key']
+assert key.startswith('sk-')
+check=json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8319/api/v1/auths/',headers={'Authorization':'Bearer '+key})))
+assert check['email']==d['email']
+print('::add-mask::'+key)
+p=pathlib.Path('qa/full-simulator/Tests/Journey.swift');p.write_text(p.read_text().replace('LOCAL_OPEN_WEBUI_API_KEY',key))
+print('Verified disposable real Open WebUI API key and authenticated account on loopback')
 PY
 (cd qa/full-simulator && xcodegen generate)
 set +e
@@ -47,6 +48,14 @@ xcodebuild -project qa/full-simulator/FourierUI.xcodeproj -scheme Journey -desti
 result=$?
 set -e
 grep -E 'FOURIER_UI|error:|failed \(|Executed [0-9]+ test|TEST SUCCEEDED|TEST FAILED' /tmp/fourier-ui.log | tail -70 | tee "$e/ui-milestones.txt" || true
+# Export only the local service's route/status receipts and app category diagnostics.
+python3 - "$RUNNER_TEMP/loopback-setup.log" "$e/backend-requests.txt" <<'PYBACK'
+import sys,re,pathlib
+s=pathlib.Path(sys.argv[1]).read_text(errors='replace')
+routes=re.findall(r'\b(GET|POST|HEAD) (/[^ ?"]*?)(?:\?[^ "]+)? HTTP/[0-9.]+[" ]+([0-9]{3})',s)
+pathlib.Path(sys.argv[2]).write_text('\n'.join(' '.join(row) for row in routes if row[1] in ['/health','/api/config','/api/v1/auths','/api/v1/auths/','/api/v1/auths/api_key','/api/v1/auths/signin'])+'\n')
+PYBACK
+xcrun simctl spawn "$dev" log show --last 12m --level info --predicate 'subsystem == "com.openui" AND (category == "Auth" OR category == "OnDeviceASR")' 2>/dev/null | grep -Ei 'connect|config|state|load|variant|error' | sed -E 's/(sk-[[:alnum:]_-]+|eyJ[[:alnum:]._-]+)/[redacted]/g' | tail -45 > "$e/app-routing.txt" || true
 # Host-read only. Never seed or modify the application preferences or files.
 container=$(xcrun simctl get_app_container "$dev" com.openui.openui data)
 python3 - "$container" "$e/sandbox.json" <<'PY'
