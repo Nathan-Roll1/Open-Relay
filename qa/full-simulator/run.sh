@@ -48,6 +48,13 @@ app=$(find /tmp/openrelay-build/Build/Products/Debug-iphonesimulator -maxdepth 1
 fi
 xcrun simctl bootstatus "$dev" -b
 xcrun simctl install "$dev" "$app"
+go build -o "$RUNNER_TEMP/fourier-loopback-probe" qa/full-simulator/loopback-probe.go
+"$RUNNER_TEMP/fourier-loopback-probe" >"$e/relay-requests.txt" 2>/tmp/fourier-qa-proxy.stderr &
+proxypid=$!
+# Only fixed status labels from the app's Auth logger leave this runner.
+xcrun simctl spawn "$dev" log stream --style compact --level info --predicate 'subsystem == "com.openui" AND category == "Auth"' > /tmp/fourier-live-auth.log 2>/dev/null &
+logpid=$!
+trap 'kill "$logpid" "$proxypid" "$backendpid" 2>/dev/null || true' EXIT
 (cd qa/full-simulator && xcodegen generate)
 set +e
 xcodebuild -project qa/full-simulator/FourierUI.xcodeproj -scheme Journey -destination "platform=iOS Simulator,id=$dev" -parallel-testing-enabled NO -derivedDataPath /tmp/fourier-ui -resultBundlePath /tmp/fourier-ui.xcresult test >/tmp/fourier-ui.log 2>&1
@@ -61,7 +68,18 @@ s=pathlib.Path(sys.argv[1]).read_text(errors='replace')
 routes=re.findall(r'\b(GET|POST|HEAD) (/[^ ?"]*?)(?:\?[^ "]+)? HTTP/[0-9.]+[" ]+([0-9]{3})',s)
 pathlib.Path(sys.argv[2]).write_text('\n'.join(' '.join(row) for row in routes if row[1] in ['/health','/api/config','/api/v1/auths','/api/v1/auths/','/api/v1/auths/api_key','/api/v1/auths/signin'])+'\n')
 PYBACK
-xcrun simctl spawn "$dev" log show --last 12m --level info --predicate 'subsystem == "com.openui" AND (category == "Auth" OR category == "OnDeviceASR")' 2>/dev/null | grep -Ei 'connect|config|state|load|variant|error' | sed -E 's/(sk-[[:alnum:]_-]+|eyJ[[:alnum:]._-]+)/[redacted]/g' | tail -45 > "$e/app-routing.txt" || true
+kill "$logpid" 2>/dev/null || true
+wait "$logpid" 2>/dev/null || true
+python3 - "$e" <<'PYRECEIPT'
+import sys,pathlib
+p=pathlib.Path(sys.argv[1])
+s=pathlib.Path('/tmp/fourier-live-auth.log').read_text(errors='replace')
+markers=['Starting connection','backendConfig set','HTTP→HTTPS redirect','authMethodSelection','not responding','Could not connect']
+(p/'app-routing.txt').write_text(''.join(f'{m}: {s.count(m)}\n' for m in markers))
+PYRECEIPT
+for name in before-connect after-connect controls; do
+  find "$HOME/Library/Developer/CoreSimulator/Devices/$dev/data/Containers/Data" -type f -name "fourier-public-$name.*" -exec cp {} "$e/" \;
+done
 # Host-read only. Never seed or modify the application preferences or files.
 container=$(xcrun simctl get_app_container "$dev" com.openui.openui data)
 python3 - "$container" "$e/sandbox.json" <<'PY'

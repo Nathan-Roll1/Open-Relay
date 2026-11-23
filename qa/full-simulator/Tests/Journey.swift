@@ -58,41 +58,68 @@ final class Journey: XCTestCase {
     }
 
     func testServerLoginAndFourierSelection() throws {
-        continueAfterFailure = false; app.launch()
+        continueAfterFailure = false
+        // Independent in-simulator control uses the same loopback route as the real app.
+        let health = expectation(description: "iOS simulator can reach the stock server")
+        var request = URLRequest(url: URL(string:"http://127.0.0.1:8320/health")!)
+        request.setValue("simulator", forHTTPHeaderField:"X-Fourier-Diagnostic")
+        URLSession.shared.dataTask(with:request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            health.fulfill()
+        }.resume()
+        wait(for:[health],timeout:15)
+        let host = "http://127.0.0.1:8320"
+        app.launch()
         let url = app.textFields.firstMatch
         XCTAssertTrue(url.waitForExistence(timeout:22), labels()); url.tap()
-        let host = "http://127.0.0.1:8319"
         url.typeText(host)
-        XCTAssertEqual(url.value as? String, host, "The ordinary input must contain the expected loopback URL")
-        // The form's floating URL label is separate from its text input.
-        // Focus the title so the software keyboard does not obscure the form action.
-        if let title=match("Open Relay",in:app) { title.tap() }
-        func connectionControl() -> XCUIElement? {
-            if let labeled=match("Connect",in:app) { return labeled }
-            // The app's custom AuthPrimaryButton can expose an empty AX label.
-            // Match only the enabled wide action directly below Advanced, above Need help.
-            guard let adv = match("Advanced",in:app,prefix:true) else { return nil }
-            let help=match("Need help?",in:app)?.frame.minY ?? app.frame.maxY
-            let candidate = app.buttons.allElementsBoundByIndex.filter {
-                $0.exists && $0.isEnabled && $0.isHittable && $0.label.isEmpty &&
-                $0.frame.width > app.frame.width*0.48 && $0.frame.midY >= adv.frame.midY &&
-                $0.frame.midY < help && $0.frame.height >= 38
+        XCTAssertEqual(url.value as? String, host)
+        let scroll=app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.exists, "The server form scroll view must be visible")
+        func capture(_ stage:String) {
+            // Called only on the server form, before a password is entered.
+            let tmp = FileManager.default.temporaryDirectory
+            try? app.screenshot().pngRepresentation.write(to:tmp.appendingPathComponent("fourier-public-"+stage+".png"))
+            let controls = scroll.buttons.allElementsBoundByIndex.map { b in
+                [b.label, b.identifier, String(describing:b.frame), String(b.isEnabled), String(b.isHittable)].joined(separator:" | ")
             }
-            return candidate.count==1 ? candidate[0] : nil
+            try? controls.joined(separator:"\n").write(to:tmp.appendingPathComponent("fourier-public-controls.txt"),atomically:true,encoding:.utf8)
+            checkpoint("Form controls "+stage+": "+controls.joined(separator:" / "))
         }
-        var action = connectionControl()
-        for _ in 0..<3 where action == nil { app.swipeUp(); action = connectionControl() }
-        guard let action = action else {
-            let controls=app.buttons.allElementsBoundByIndex.filter{$0.exists}.map{"[\($0.label)] \($0.frame) on=\($0.isEnabled) hittable=\($0.isHittable)"}
-            XCTFail("Connection action, exact label or geometry, unavailable: "+controls.joined(separator:"; ")); return
+        func connectionControl() -> XCUIElement? {
+            let keyboard = app.keyboards.firstMatch
+            let bottom = keyboard.exists ? keyboard.frame.minY : app.frame.maxY
+            let controls = scroll.buttons.allElementsBoundByIndex.filter { b in
+                b.exists && b.isEnabled && b.isHittable && b.frame.midY < bottom &&
+                    b.frame.width > app.frame.width*0.45 && b.frame.height >= 38
+            }
+            if let connect = controls.first(where: { $0.label.localizedCaseInsensitiveContains("Connect") }) {
+                return connect
+            }
+            guard let advanced = match("Advanced",in:scroll,prefix:true) else {return nil}
+            let candidates=controls.filter { $0.label.isEmpty && $0.frame.midY > advanced.frame.maxY }
+            return candidates.count == 1 ? candidates[0] : nil
         }
-        checkpoint("Tapping original Connect button")
+        var action=connectionControl()
+        // Scroll the form above the keyboard; never select a key from the keyboard itself.
+        for _ in 0..<4 where action == nil {
+            let kb=app.keyboards.firstMatch
+            let bottom=kb.exists ? kb.frame.minY : scroll.frame.maxY
+            let start=CGVector(dx:0.82,dy:min(0.85,(bottom-30-scroll.frame.minY)/scroll.frame.height))
+            scroll.coordinate(withNormalizedOffset:start).press(forDuration:0.08,thenDragTo:scroll.coordinate(withNormalizedOffset:CGVector(dx:0.82,dy:0.15)))
+            action=connectionControl()
+        }
+        capture("before-connect")
+        guard let action=action else { XCTFail("No identifiable, unobstructed connect button in the form"); return }
+        checkpoint("Tapping production form action at "+String(describing:action.frame))
         action.tap()
         let authReady = until(65, {
             self.match("Email & Password",in:self.app,prefix:true) != nil ||
               self.match("Choose how you'd like to sign in",in:self.app) != nil ||
               self.app.secureTextFields.firstMatch.exists
         })
+        capture("after-connect")
         XCTAssertTrue(authReady, "After real server connection: "+labels())
         if !app.secureTextFields.firstMatch.exists { try tap("Email & Password",prefix:true,scroll:true) }
         let email=app.textFields.firstMatch, pw=app.secureTextFields.firstMatch
